@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atelier IA</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn only-mobile" id="toggle-sidebar" aria-label="Afficher les projets">☰</button>
+    <div class="brand"><span class="brand-mark">◆</span> Atelier IA</div>
+    <span class="mode" id="mode-badge" title=""></span>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <button class="btn primary block" id="new-project-btn">+ Nouveau projet</button>
+      <h2 class="side-title">Mes projets</h2>
+      <ul class="project-list" id="project-list"></ul>
+      <label class="small muted"><input type="checkbox" id="show-archived"> Afficher les projets archivés</label>
+    </aside>
+
+    <main class="main" id="main">
+      <!-- Accueil / création -->
+      <section class="welcome" id="welcome" hidden>
+        <h1>De l'idée à l'application, pas à pas.</h1>
+        <p class="lead">Décrivez votre idée comme elle vous vient, même incomplète. L'assistant vous posera des questions simples, une à la fois, et s'occupe de la partie technique.</p>
+        <form id="new-project-form" class="card">
+          <label for="np-name">Nom du projet</label>
+          <input id="np-name" required maxlength="120" placeholder="Ex. : Suivi de chantier">
+          <label for="np-idea">Votre idée, en quelques phrases</label>
+          <textarea id="np-idea" rows="5" required placeholder="Ex. : Je voudrais une petite appli pour noter les problèmes sur mes chantiers avec une photo, et retrouver ce qui n'est pas encore réglé."></textarea>
+          <button class="btn primary" type="submit">Commencer</button>
+        </form>
+        <div class="how card">
+          <h2>Comment ça se passe</h2>
+          <ol class="how-steps" id="how-steps"></ol>
+        </div>
+      </section>
+
+      <!-- Projet ouvert -->
+      <section class="project" id="project" hidden>
+        <div class="project-head">
+          <div class="title-row">
+            <h1 id="project-name" title="Cliquer pour renommer" tabindex="0"></h1>
+            <div class="head-actions">
+              <button class="btn ghost small" id="archive-btn"></button>
+              <button class="btn ghost small danger" id="delete-btn">Supprimer</button>
+            </div>
+          </div>
+          <ol class="stepper" id="stepper" aria-label="Étapes du projet"></ol>
+        </div>
+
+        <div class="mobile-tabs only-mobile" role="tablist">
+          <button class="tab active" data-mobile="chat">Conversation</button>
+          <button class="tab" data-mobile="panel">Suivi du projet</button>
+        </div>
+
+        <div class="workspace">
+          <div class="chat" id="chat-col">
+            <div class="messages" id="messages" aria-live="polite"></div>
+            <div class="options" id="options"></div>
+            <form class="composer" id="composer">
+              <textarea id="input" rows="2" placeholder="Écrivez votre réponse… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"></textarea>
+              <button class="btn primary" id="send-btn" type="submit">Envoyer</button>
+            </form>
+          </div>
+
+          <aside class="panel" id="panel-col">
+            <nav class="tabs" role="tablist">
+              <button class="tab active" data-tab="status">Où j'en suis</button>
+              <button class="tab" data-tab="memory">Mémoire</button>
+              <button class="tab" data-tab="docs">Documents</button>
+              <button class="tab" data-tab="journal">Journal</button>
+            </nav>
+            <div class="tab-body" id="tab-status"></div>
+            <div class="tab-body" id="tab-memory" hidden></div>
+            <div class="tab-body" id="tab-docs" hidden></div>
+            <div class="tab-body" id="tab-journal" hidden></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="doc-dialog">
+    <div class="dialog-head">
+      <h2 id="doc-title"></h2>
+      <button class="icon-btn" id="doc-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="dialog-body markdown" id="doc-body"></div>
+    <div class="dialog-foot" id="doc-foot"></div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
