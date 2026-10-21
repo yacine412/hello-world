@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node atelier.js:*)",
+      "Read(projets/**)",
+      "Edit(projets/**)",
+      "Write(projets/**)"
+    ]
+  }
+}

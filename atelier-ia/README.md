@@ -1,89 +1,82 @@
-# Atelier IA — votre assistant personnel de création d'applications
+# Atelier — votre assistant personnel de création d'applications
 
-Atelier IA vous accompagne **de l'idée jusqu'au pack de développement** d'une application, sans avoir besoin de savoir programmer.
-Vous décrivez votre idée en langage courant ; l'assistant pose des questions simples, une à la fois, retient tout ce qui est dit dans une **mémoire de projet**, et rédige les documents nécessaires (fiche projet, cahier fonctionnel, conception, plan de développement, instructions pour Claude Code).
+Atelier vous accompagne **de l'idée jusqu'à l'application qui fonctionne**, sans avoir besoin de savoir programmer, et **sans clé API** :
+
+- **Claude Code est l'assistant.** Vous discutez avec lui en français. Il pose les questions une à la fois, retient tout dans la mémoire du projet, rédige les documents, puis **écrit et teste le code** de l'application. Il utilise votre abonnement Claude.
+- **Le tableau de bord vous montre où vous en êtes** : l'étape en cours, les décisions à valider, les questions ouvertes, les documents à relire et ce qui a été réellement fait. Vous pouvez y valider, rejeter, répondre et corriger : Claude Code le verra à la séance suivante. Son interface vient d'une maquette conçue avec Claude Design.
 
 > Pourquoi ce choix, quelles limites, et quelle suite : voir [docs/CONCEPTION.md](docs/CONCEPTION.md).
 
 ---
 
-## Démarrer (environ 10 minutes, une seule fois)
+## Installer (environ 10 minutes, une seule fois)
 
-### 1. Installer Node.js
-Node.js est le « moteur » qui fait tourner l'application sur votre ordinateur.
-Téléchargez la version **LTS** sur <https://nodejs.org> et installez-la (bouton « Suivant » jusqu'au bout).
+1. **Abonnement Claude** (Pro ou Max), qui donne accès à Claude Code.
+2. **Claude Code** : installez l'application de bureau Claude (<https://claude.ai/download>) et ouvrez l'onglet **Code**. Si vous préférez le terminal, voir <https://code.claude.com/docs>.
+3. **Node.js** (version LTS) : <https://nodejs.org>. Il fait tourner le tableau de bord et le petit outil qu'utilise Claude Code.
+4. **Le dossier `atelier-ia`** : téléchargez ce dépôt (**Code → Download ZIP** sur GitHub), décompressez-le et rangez le dossier `atelier-ia` où vous voulez.
 
-### 2. Récupérer le dossier `atelier-ia`
-Téléchargez ce dépôt (bouton vert **Code → Download ZIP** sur GitHub), décompressez-le, et gardez le dossier `atelier-ia`.
+Il n'y a rien d'autre à installer : aucune dépendance, aucune clé, aucun compte supplémentaire.
 
-### 3. Obtenir une clé API Claude (pour activer l'IA)
-1. Créez un compte sur <https://console.anthropic.com>.
-2. Ajoutez un moyen de paiement et un petit crédit (l'usage est facturé à la consommation, voir « Coûts » plus bas).
-3. Menu **API Keys → Create Key**, puis copiez la clé (elle commence par `sk-ant-`).
+## Utiliser
 
-### 4. Coller la clé dans le fichier `.env`
-Dans le dossier `atelier-ia`, faites une copie du fichier `.env.example` et nommez-la **`.env`**.
-Ouvrez `.env` avec un éditeur de texte (Bloc-notes, TextEdit) et collez votre clé après le `=` :
+### Parler à l'assistant : Claude Code
+Ouvrez Claude Code **dans le dossier `atelier-ia`**. Il y trouve sa méthode de travail (`CLAUDE.md`) et les commandes suivantes :
 
-```
-ANTHROPIC_API_KEY=sk-ant-...votre-clé...
-```
+| Commande | Ce qu'elle fait |
+|---|---|
+| `/nouveau-projet` | Démarre un projet à partir de votre idée, décrite comme elle vous vient |
+| `/continuer <projet>` | Reprend un projet là où il s'était arrêté, en tenant compte de ce que vous avez validé dans le tableau de bord |
+| `/etat <projet>` | Fait le point, sans rien modifier |
+| `/livrable <projet>` | Rédige le document de l'étape en cours (fiche projet, cahier fonctionnel, conception…) |
+| `/realiser <projet>` | Écrit le code de l'application, tâche par tâche, et lance les tests |
+| `/modifier <projet> <demande>` | Analyse une modification avant de la faire |
+| `/tableau` | Ouvre le tableau de bord |
 
-> **Sécurité :** ce fichier reste sur votre ordinateur. La clé n'est jamais envoyée au navigateur et le fichier `.env` est exclu de Git : il ne sera pas publié par erreur sur GitHub. Ne la partagez jamais.
+Vous pouvez aussi lui parler normalement : « où en est mon projet de chantier ? », « je voudrais ajouter un export PDF »…
 
-Sans clé, l'application démarre en **mode démo** : tout fonctionne (projets, mémoire, documents, exports) mais l'assistant pose des questions préparées à l'avance au lieu de réfléchir.
-
-### 5. Lancer l'application
+### Suivre et valider : le tableau de bord
 - **Windows :** double-cliquez sur `demarrer.bat`.
-- **Mac / Linux :** ouvrez un Terminal dans le dossier et tapez `./demarrer.sh`.
-- Ou, dans un terminal : `npm install` (la première fois) puis `npm start`.
+- **Mac / Linux :** `./demarrer.sh` dans un terminal ouvert sur le dossier.
+- Ou demandez à Claude Code : `/tableau`.
 
-Ouvrez ensuite <http://localhost:3000> dans votre navigateur. Pour arrêter, fermez la fenêtre du terminal.
+Puis ouvrez <http://localhost:3000>. La page se met à jour seule quand Claude Code travaille. Le bouton **Copier** donne la commande à coller dans Claude Code pour reprendre le projet.
 
----
-
-## Utilisation
-
-1. **Nouveau projet :** donnez un nom et décrivez votre idée en quelques phrases.
-2. **Répondez aux questions** de l'assistant, ou cliquez sur une des réponses proposées.
-3. Le panneau de droite vous montre en permanence :
-   - **Où j'en suis** — l'étape en cours, ce qu'il reste à couvrir, les décisions à valider, les prochaines actions ;
-   - **Mémoire** — tout ce que l'assistant a retenu, classé : informations confirmées, hypothèses, recommandations, décisions (à valider / validées), questions ouvertes, fonctionnalités (indispensables / plus tard), tâches, tests, problèmes, risques. Vous pouvez **valider, corriger ou supprimer** chaque élément : l'assistant en tient compte au message suivant ;
-   - **Documents** — les livrables de chaque étape, à relire puis valider ; chaque réécriture crée une nouvelle version ;
-   - **Journal** — les actions réellement effectuées par l'application.
-4. **Les 7 étapes** (bandeau en haut) : Idée → Fonctionnalités → Conception → Préparation → Réalisation → Validation → Évolution. Vous passez à l'étape suivante quand vous le décidez ; vous pouvez revenir en arrière sans rien perdre.
-5. **Réaliser l'application :** à l'étape Préparation, rédigez le *Plan de développement* et les *Instructions pour Claude Code*, puis cliquez sur **Télécharger le pack pour Claude Code**. Placez ce fichier `CLAUDE.md` dans un nouveau dossier, ouvrez ce dossier avec Claude Code et demandez : *« Réalise la tâche 1 du plan »*.
-6. **Reprendre plus tard :** fermez tout ; vos projets sont enregistrés. Au prochain lancement, cliquez simplement sur le projet dans la liste de gauche.
+### Les 7 étapes
+Idée → Fonctionnalités → Conception → Préparation → Réalisation → Validation → Évolution.
+Claude vous propose de passer à l'étape suivante quand la précédente est couverte. C'est toujours vous qui décidez.
 
 ### Où sont mes données ?
-Dans le dossier `atelier-ia/data/projects/`, un fichier par projet. Pour faire une sauvegarde, copiez ce dossier. Le bouton **Télécharger le dossier complet** produit aussi un document lisible de tout le projet.
+Dans `atelier-ia/projets/`, un dossier par projet :
+- `projet.json` : la mémoire ;
+- `documents/` : les livrables en Markdown ;
+- `application/` : le code de l'application.
+
+Pour faire une sauvegarde, copiez ce dossier. Il est exclu de Git, donc il n'est pas publié sur GitHub. Le contenu de vos conversations est traité par Claude, comme pour tout usage de Claude Code.
 
 ---
-
-## Coûts
-- L'application elle-même est gratuite et tourne sur votre ordinateur : aucun abonnement, aucun hébergement.
-- Seuls les appels à l'IA sont facturés par Anthropic, à l'usage. Le modèle par défaut est `claude-opus-5-5` (le plus fiable pour le cadrage et la rédaction). Pour réduire les coûts, vous pouvez indiquer `AI_MODEL=claude-sonnet-5-5` dans `.env`.
-- Vous pouvez fixer une limite de dépense mensuelle dans la console Anthropic (*Settings → Limits*). C'est recommandé.
 
 ## Dépannage
-| Message | Que faire |
+| Problème | Que faire |
 |---|---|
-| « La clé API est refusée » | Vérifiez la clé dans `.env` (pas d'espace, pas de guillemets), puis relancez. |
-| « Trop de demandes… ou crédit épuisé » | Patientez une minute, ou rechargez votre crédit dans la console Anthropic. |
-| « Impossible de joindre le service d'IA » | Vérifiez votre connexion Internet. |
-| Le badge affiche « Mode démo » | Le fichier `.env` est absent, mal nommé (`.env.txt`) ou la clé est vide. |
-| `EADDRINUSE` au démarrage | L'application tourne déjà, ou le port est pris : ajoutez `PORT=3001` dans `.env`. |
+| Les commandes `/nouveau-projet`… n'apparaissent pas | Claude Code n'est pas ouvert dans le dossier `atelier-ia` : rouvrez-le en choisissant ce dossier. |
+| Claude demande l'autorisation pour `node atelier.js` | Normalement pré-autorisé par `.claude/settings.json`. Sinon, choisissez « Toujours autoriser ». |
+| Le tableau de bord n'affiche rien | Vérifiez qu'il est lancé (fenêtre ouverte) et que vous avez créé un projet avec `/nouveau-projet`. |
+| `Le port 3000 est déjà utilisé` | Le tableau de bord est déjà ouvert : allez sur <http://localhost:3000>. |
+| « Node.js est introuvable » | Installez Node.js (version LTS), puis relancez. |
 
 ---
 
-## Pour les développeurs (ou pour Claude Code)
+## Pour les développeurs
 
-- Node.js ≥ 20.12, une seule dépendance (`@anthropic-ai/sdk`). Interface en HTML/CSS/JS sans étape de compilation.
-- `npm test` lance les tests automatiques (`node --test`, aucun appel réseau).
+- Node.js ≥ 20.12, **aucune dépendance**. Interface en HTML/CSS/JS sans compilation.
+- `npm test` lance les tests automatiques (`node --test`).
 - Structure :
-  - `server.js` — serveur local (127.0.0.1 uniquement) et API JSON ;
-  - `lib/method.js` — la méthode : étapes, types d'éléments mémorisés, livrables, consignes de l'assistant ;
-  - `lib/assistant.js` — conversation, contexte envoyé à l'IA, application des mises à jour, exports ;
-  - `lib/ai.js` — fournisseurs d'IA (Claude, démo) derrière une interface commune ;
-  - `lib/store.js` — enregistrement des projets (un JSON par projet, écritures atomiques) ;
-  - `public/` — l'interface.
+  - `CLAUDE.md` et `.claude/commands/` : la méthode et les commandes de l'assistant (Claude Code) ;
+  - `atelier.js` : l'outil en ligne de commande avec lequel Claude Code lit et modifie les projets (`node atelier.js aide`) ;
+  - `server.js` : le tableau de bord (serveur local sur 127.0.0.1 et API JSON) ;
+  - `lib/method.js` : étapes, types d'éléments mémorisés, livrables ;
+  - `lib/store.js` : l'enregistrement des projets (écritures atomiques) ;
+  - `lib/report.js` : l'état lu par Claude Code et l'export ;
+  - `public/` : l'interface.
+- La maquette de référence de l'interface est dans Claude Design (artefact « Atelier IA — Tableau de bord »).

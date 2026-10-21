@@ -1,31 +1,23 @@
-import { escapeHtml, renderMarkdown } from './markdown.js';
+import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 
 const $ = (sel) => document.querySelector(sel);
-const state = {
-  method: null,
-  status: null,
-  projects: [],
-  project: null,
-  busy: false,
-  tab: 'status',
-  showArchived: false,
-};
+const REFRESH_MS = 4000;
+const state = { method: null, projects: [], project: null, showArchived: false, section: 'summary', pendingRender: false };
 
 const STATUS_LABELS = {
   confirmed: 'confirmé', open: 'ouvert', rejected: 'rejeté', accepted: 'acceptée', proposed: 'à valider',
   validated: 'validé', answered: 'répondue', essential: 'indispensable', later: 'plus tard', dropped: 'abandonnée',
   todo: 'à faire', doing: 'en cours', done: 'fait', passed: 'réussi', failed: 'échoué', resolved: 'résolu', mitigated: 'maîtrisé',
 };
-const STATUS_TONE = {
-  confirmed: 'ok', validated: 'ok', accepted: 'ok', answered: 'ok', done: 'ok', passed: 'ok', resolved: 'ok', mitigated: 'ok', essential: 'info',
-  proposed: 'warn', open: 'warn', todo: 'warn', doing: 'info',
-  rejected: 'danger', failed: 'danger', dropped: 'danger',
+const TONE = {
+  confirmed: 'ok', validated: 'ok', accepted: 'ok', answered: 'ok', done: 'ok', passed: 'ok', resolved: 'ok', mitigated: 'ok',
+  essential: 'info', doing: 'info', proposed: 'warn', open: 'warn', todo: 'warn', rejected: '', failed: 'warn', dropped: '', later: '',
 };
-// Ordre d'affichage de la mémoire : ce qui demande une action en premier.
-const KIND_ORDER = ['decision', 'question', 'next_action', 'feature', 'requirement', 'fact', 'assumption', 'recommendation', 'task', 'test', 'issue', 'risk'];
+const MEMORY_SHORT = { fact: 'Confirmé', assumption: 'Hypothèse', requirement: 'Règle', recommendation: 'Recommandé', risk: 'Risque', issue: 'Problème' };
+const KIND_ORDER = ['decision', 'recommendation', 'question', 'next_action', 'feature', 'requirement', 'fact', 'assumption', 'task', 'test', 'issue', 'risk'];
 
 // ---------------------------------------------------------------------------
-// Accès à l'API
+// API
 // ---------------------------------------------------------------------------
 
 async function api(method, url, body) {
@@ -45,7 +37,7 @@ function toast(message, isError = false) {
   el.className = 'toast' + (isError ? ' error' : '');
   el.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => (el.hidden = true), isError ? 7000 : 3000);
+  toast.timer = setTimeout(() => (el.hidden = true), isError ? 7000 : 2500);
 }
 
 async function guard(fn) {
@@ -58,31 +50,16 @@ async function guard(fn) {
 }
 
 // ---------------------------------------------------------------------------
-// Chargement
+// Chargement et actualisation automatique
 // ---------------------------------------------------------------------------
 
 async function init() {
-  const [method, status] = await Promise.all([api('GET', '/api/method'), api('GET', '/api/status')]);
-  state.method = method;
-  state.status = status;
-  const badge = $('#mode-badge');
-  if (status.mode === 'live') {
-    badge.textContent = 'IA connectée';
-    badge.className = 'mode live';
-    badge.title = `Modèle : ${status.model}`;
-  } else {
-    badge.textContent = 'Mode démo (sans IA)';
-    badge.className = 'mode demo';
-    badge.title = "Ajoutez votre clé dans le fichier .env pour activer l'IA (voir le guide).";
-  }
-  $('#how-steps').innerHTML = method.phases
-    .map((p) => `<li><b>${escapeHtml(p.name)}</b> — ${escapeHtml(p.goal)}</li>`)
-    .join('');
+  state.method = await api('GET', '/api/method');
   bindEvents();
   await loadProjects();
-  const fromHash = decodeURIComponent(location.hash.slice(1));
-  if (fromHash && state.projects.some((p) => p.id === fromHash)) await openProject(fromHash);
-  else showWelcome();
+  route();
+  setInterval(poll, REFRESH_MS);
+  setInterval(renderFreshness, 30000);
 }
 
 async function loadProjects() {
@@ -90,34 +67,61 @@ async function loadProjects() {
   renderProjectList();
 }
 
+function currentId() {
+  return decodeURIComponent(location.hash.slice(1));
+}
+
+async function route() {
+  const id = currentId() || (state.projects.length === 1 ? state.projects[0].id : '');
+  if (id && state.projects.some((p) => p.id === id)) await openProject(id);
+  else showWelcome();
+}
+
 async function openProject(id) {
   const project = await guard(() => api('GET', `/api/projects/${id}`));
-  if (!project) return;
+  if (!project) return showWelcome();
   state.project = project;
-  history.replaceState(null, '', `#${id}`);
-  $('#welcome').hidden = true;
-  $('#project').hidden = false;
-  $('#sidebar').classList.remove('open');
-  renderProject();
-  renderProjectList();
-  scrollMessages();
+  if (currentId() !== id) history.replaceState(null, '', `#${id}`);
+  closeNav();
+  render();
 }
 
-function showWelcome() {
-  state.project = null;
-  history.replaceState(null, '', location.pathname);
-  $('#project').hidden = true;
-  $('#welcome').hidden = false;
-  renderProjectList();
-  $('#np-name').focus();
+// Claude Code modifie les fichiers pendant que la page est ouverte : on recharge ce qui a changé.
+async function poll() {
+  if (document.hidden) return;
+  let list;
+  try {
+    list = await api('GET', '/api/projects');
+  } catch {
+    return;
+  }
+  const changedList = JSON.stringify(list) !== JSON.stringify(state.projects);
+  state.projects = list;
+  if (changedList) renderProjectList();
+  const p = state.project;
+  if (!p) {
+    if (list.length && !$('#dialog').open) route();
+    return;
+  }
+  const fresh = list.find((x) => x.id === p.id);
+  if (!fresh) return showWelcome();
+  if (fresh.updatedAt !== p.updatedAt) {
+    const project = await api('GET', `/api/projects/${p.id}`).catch(() => null);
+    if (project) {
+      state.project = project;
+      safeRender();
+    }
+  }
 }
 
-function setProject(project, { flash = [] } = {}) {
-  state.project = project;
-  const listed = state.projects.find((p) => p.id === project.id);
-  if (listed) Object.assign(listed, { name: project.name, phase: project.phase, updatedAt: project.updatedAt, archived: project.archived });
-  renderProject(flash);
-  renderProjectList();
+// N'efface pas une réponse en cours de saisie : le rendu attend que le champ soit quitté.
+function safeRender() {
+  const el = document.activeElement;
+  if (el && el.matches('#main input, #main textarea') && el.value.trim()) {
+    state.pendingRender = true;
+    return;
+  }
+  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -128,191 +132,196 @@ function phaseOf(id) {
   return state.method.phases.find((p) => p.id === id);
 }
 
+function render() {
+  state.pendingRender = false;
+  renderProjectList();
+  renderFreshness();
+  if (state.project) renderProject();
+}
+
 function renderProjectList() {
   const visible = state.projects.filter((p) => state.showArchived || !p.archived);
   $('#project-list').innerHTML = visible.length
-    ? visible
-        .map((p) => {
-          const phase = phaseOf(p.phase);
-          const active = state.project?.id === p.id ? ' active' : '';
-          return `<li><button class="${active}" data-open="${escapeHtml(p.id)}">
-            <span class="p-name">${escapeHtml(p.name)}</span>
-            <span class="p-meta">${p.archived ? 'Archivé · ' : ''}Étape ${escapeHtml(phase?.name || p.phase)} · ${formatDate(p.updatedAt)}</span>
-          </button></li>`;
-        })
-        .join('')
-    : '<li class="small muted">Aucun projet pour l’instant.</li>';
+    ? visible.map((p) => `<li><a href="#${esc(p.id)}"${state.project?.id === p.id ? ' aria-current="page"' : ''}>
+        <span class="p-name">${esc(p.name)}</span>
+        <span class="p-meta">${p.archived ? 'Archivé · ' : ''}Étape ${p.phase} · ${esc(phaseOf(p.phase)?.name || '')}</span>
+      </a></li>`).join('')
+    : '<li class="empty" style="padding:0 10px">Aucun projet pour l’instant.</li>';
 }
 
-function renderProject(flash = []) {
+function renderFreshness() {
+  const el = $('#freshness');
   const p = state.project;
-  $('#project-name').textContent = p.name;
-  $('#archive-btn').textContent = p.archived ? 'Désarchiver' : 'Archiver';
-  renderStepper();
-  renderMessages();
-  renderTab(flash);
+  if (!p) return (el.hidden = true);
+  const last = p.journal[p.journal.length - 1];
+  const who = last?.by === 'user' ? 'par vous' : 'par Claude Code';
+  el.textContent = `À jour — modifié ${who} ${timeAgo(p.updatedAt)}`;
+  el.hidden = false;
 }
 
-function renderStepper() {
-  const current = state.project.phase;
-  const ids = state.method.phases.map((p) => p.id);
-  $('#stepper').innerHTML = state.method.phases
-    .map((p) => {
-      const cls = p.id === current ? 'current' : ids.indexOf(p.id) < ids.indexOf(current) ? 'done' : '';
-      return `<li class="${cls}"><button data-phase="${p.id}" title="${escapeHtml(p.title)}">
-        <b>${p.id}. ${escapeHtml(p.name)}</b>${cls === 'done' ? 'terminée' : cls === 'current' ? 'en cours' : 'à venir'}
-      </button></li>`;
-    })
-    .join('');
-}
-
-function renderMessages() {
-  const p = state.project;
-  const html = [];
-  if (!p.messages.some((m) => m.role !== 'note')) {
-    html.push(`<div class="msg assistant markdown">${renderMarkdown(
-      `Bonjour ! Je suis votre assistant pour le projet **${p.name}**.\n\n` +
-        (p.summary.idea
-          ? 'Je vais commencer par vous poser quelques questions sur votre idée.'
-          : 'Décrivez-moi votre idée, comme elle vous vient : je vous poserai ensuite des questions simples, une à la fois.'),
-    )}</div>`);
-  }
-  const lastAssistant = [...p.messages].reverse().find((m) => m.role === 'assistant');
-  for (const m of p.messages) {
-    if (m.role === 'user') html.push(`<div class="msg user">${escapeHtml(m.content)}</div>`);
-    else if (m.role === 'note') html.push(`<div class="msg note">${escapeHtml(m.content)}</div>`);
-    else {
-      let extra = '';
-      const c = m.changes;
-      if (c && (c.added.length || c.updated.length || c.summary.length)) {
-        const parts = [];
-        if (c.added.length) parts.push(`${c.added.length} élément(s) ajouté(s) à la mémoire`);
-        if (c.updated.length) parts.push(`${c.updated.length} mis à jour`);
-        if (c.summary.length) parts.push(`synthèse : ${c.summary.join(', ')}`);
-        extra += `<div class="changes">✎ ${escapeHtml(parts.join(' · '))} — <button data-goto="memory">voir la mémoire</button></div>`;
-      }
-      if (m === lastAssistant && m.readyForNextPhase && m.phase === p.phase) {
-        const next = nextPhase();
-        const deliverable = state.method.deliverables.find((d) => d.phase === p.phase);
-        extra += `<div class="ready">
-          ${deliverable ? `<button class="btn small" data-generate="${deliverable.type}">Rédiger : ${escapeHtml(deliverable.title)}</button>` : ''}
-          ${next ? `<button class="btn small primary" data-phase="${next.id}">Passer à l’étape ${next.id}. ${escapeHtml(next.name)}</button>` : ''}
-        </div>`;
-      }
-      html.push(`<div class="msg assistant"><div class="markdown">${renderMarkdown(m.content)}</div>${extra}</div>`);
-    }
-  }
-  if (state.busy === 'chat') html.push('<div class="msg assistant thinking">L’assistant réfléchit</div>');
-  $('#messages').innerHTML = html.join('');
-
-  const options = !state.busy && lastAssistant && p.messages[p.messages.length - 1] === lastAssistant ? lastAssistant.options || [] : [];
-  $('#options').innerHTML = options.map((o) => `<button data-option="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join('');
-  $('#send-btn').disabled = !!state.busy;
-  $('#input').disabled = state.busy === 'chat';
-}
-
-function nextPhase() {
-  const ids = state.method.phases.map((p) => p.id);
-  return state.method.phases[ids.indexOf(state.project.phase) + 1];
-}
-
-function scrollMessages() {
-  const el = $('#messages');
-  el.scrollTop = el.scrollHeight;
-}
-
-function renderTab(flash = []) {
-  for (const t of ['status', 'memory', 'docs', 'journal']) {
-    $(`#tab-${t}`).hidden = t !== state.tab;
-    document.querySelector(`.tabs [data-tab="${t}"]`).classList.toggle('active', t === state.tab);
-  }
-  if (state.tab === 'status') renderStatus();
-  if (state.tab === 'memory') renderMemory(flash);
-  if (state.tab === 'docs') renderDocs();
-  if (state.tab === 'journal') renderJournal();
-}
-
-function count(kind, status) {
-  return state.project.items.filter((i) => i.kind === kind && (!status || i.status === status)).length;
-}
-
-function renderStatus() {
-  const p = state.project;
-  const phase = phaseOf(p.phase);
-  const next = nextPhase();
-  const nextActions = p.items.filter((i) => i.kind === 'next_action' && i.status !== 'done');
-  const deliverables = state.method.deliverables.filter((d) => d.phase === p.phase);
-  const s = p.summary;
-  const summaryRows = [
-    ['Idée', s.idea], ['Problème', s.problem], ['Utilisateurs', s.users], ['Objectifs', s.goals],
-    ['Contraintes', s.constraints], ['Résultat attendu', s.expected_results],
-  ].filter(([, v]) => v);
-
-  $('#tab-status').innerHTML = `
-    <div>
-      <p class="section-title">Étape en cours</p>
-      <h2>${phase.id}. ${escapeHtml(phase.title)}</h2>
-      <p class="small muted">${escapeHtml(phase.goal)}</p>
-      <ul class="checklist">${phase.checklist.map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
-    </div>
-    <div class="stats">
-      <div class="stat ${count('decision', 'proposed') ? 'attention' : ''}"><b>${count('decision', 'proposed')}</b>décision(s) à valider</div>
-      <div class="stat ${count('question', 'open') ? 'attention' : ''}"><b>${count('question', 'open')}</b>question(s) ouverte(s)</div>
-      <div class="stat"><b>${count('feature', 'essential')}</b>fonctionnalité(s) MVP</div>
-      <div class="stat"><b>${count('task', 'done')} / ${count('task')}</b>tâche(s) faites</div>
-    </div>
-    <div>
-      <p class="section-title">Prochaines actions recommandées</p>
-      ${nextActions.length ? `<ul class="checklist">${nextActions.map((a) => `<li>${escapeHtml(a.text)}</li>`).join('')}</ul>` : '<p class="small muted">Continuez la conversation : l’assistant proposera les prochaines actions.</p>'}
-    </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
-      ${deliverables.map((d) => `<button class="btn small" data-generate="${d.type}">Rédiger : ${escapeHtml(d.title)}</button>`).join('')}
-      ${next ? `<button class="btn small primary" data-phase="${next.id}">Étape suivante →</button>` : ''}
-    </div>
-    <div class="summary">
-      <p class="section-title">Synthèse du projet</p>
-      ${summaryRows.length ? `<dl>${summaryRows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>` : '<p class="small muted">Elle se remplira au fil de la conversation.</p>'}
+function showWelcome() {
+  state.project = null;
+  if (location.hash) history.replaceState(null, '', location.pathname);
+  $('#bottom-nav').hidden = true;
+  renderFreshness();
+  renderProjectList();
+  $('#main').innerHTML = `
+    <div class="welcome">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <h1>De l’idée à l’application, pas à pas.</h1>
+        <p class="lead">Vous discutez avec Claude Code ; ce tableau de bord vous montre où en est chaque projet, ce qu’il reste à décider et les documents à relire.</p>
+      </div>
+      <ol class="steps">
+        <li><span class="num">1</span><div><strong>Ouvrez Claude Code dans le dossier Atelier</strong>
+          <span class="muted small">Application de bureau Claude → Code → choisir le dossier « atelier-ia ».</span></div></li>
+        <li><span class="num">2</span><div><strong>Tapez la commande et décrivez votre idée</strong>
+          <code class="cmd">/nouveau-projet</code>
+          <span class="muted small">Claude vous pose des questions simples, une à la fois.</span></div></li>
+        <li><span class="num">3</span><div><strong>Suivez et validez ici</strong>
+          <span class="muted small">${state.projects.length ? 'Choisissez un projet dans la liste.' : 'Votre projet apparaîtra sur cette page dès que Claude l’aura créé.'}</span></div></li>
+      </ol>
+      <p class="muted small" style="margin:0">Aucune clé API : Claude Code utilise votre abonnement Claude. Vos projets sont des fichiers dans le dossier <code>projets/</code> de votre ordinateur.</p>
     </div>`;
 }
 
-function renderMemory(flash = []) {
+function renderProject() {
   const p = state.project;
-  const kinds = state.method.kinds;
-  const groups = KIND_ORDER.filter((k) => p.items.some((i) => i.kind === k))
-    .map((kind) => {
-      const items = p.items.filter((i) => i.kind === kind);
-      return `<div class="item-group">
-        <h3>${escapeHtml(kinds[kind].label)} <span class="count">(${items.length})</span></h3>
-        <ul class="items">${items.map((i) => itemHtml(i, kinds[kind].statuses, flash.includes(i.id))).join('')}</ul>
-      </div>`;
-    })
-    .join('');
-  $('#tab-memory').innerHTML = `
-    <p class="legend">Tout ce que l'assistant a retenu. Vous pouvez valider, corriger ou supprimer chaque élément : l'assistant en tiendra compte à son prochain message.</p>
-    ${groups || '<p class="small muted">La mémoire est vide pour l’instant.</p>'}
-    <form class="add-item" id="add-item-form">
-      <p class="section-title">Ajouter un élément</p>
-      <div class="row">
-        <select id="add-kind">${KIND_ORDER.map((k) => `<option value="${k}">${escapeHtml(kinds[k].label)}</option>`).join('')}</select>
+  const phase = phaseOf(p.phase);
+  const ids = state.method.phases.map((x) => x.id);
+  const items = (kind, status) => p.items.filter((i) => i.kind === kind && (!status || i.status === status));
+  const toValidate = [...items('decision', 'proposed'), ...items('recommendation', 'open')];
+  const openQuestions = items('question', 'open');
+  const essentials = items('feature', 'essential');
+  const later = items('feature', 'later');
+  const nextAction = items('next_action', 'todo')[0];
+  const docs = latestDocs();
+  const validatedDocs = Object.values(docs).filter((d) => d.status === 'validated').length;
+  const remembered = p.items.filter((i) => MEMORY_SHORT[i.kind] && i.status !== 'rejected').slice(-6).reverse();
+  const tasks = items('task');
+
+  $('#bottom-nav').hidden = false;
+  $('#main').innerHTML = `
+  <div class="content" data-show="${state.section}">
+    <div class="project-title">
+      <div>
+        <h1>${esc(p.name)}</h1>
+        ${p.summary.idea ? `<p>${esc(p.summary.idea)}</p>` : ''}
       </div>
-      <div class="row"><input id="add-text" placeholder="Texte" maxlength="1000" required><button class="btn small" type="submit">Ajouter</button></div>
-    </form>`;
+      <button class="btn sm" data-archive>${p.archived ? 'Désarchiver' : 'Archiver'}</button>
+    </div>
+
+    <ol class="stepper" aria-label="Étapes du projet">
+      ${state.method.phases.map((s, i) => {
+        const cls = s.id === p.phase ? 'current' : i < ids.indexOf(p.phase) ? 'done' : '';
+        return `<li class="${cls}" title="${esc(s.title)}"${cls === 'current' ? ' aria-current="step"' : ''}>
+          <b>${s.id}. ${esc(s.name)}</b><span>${cls === 'done' ? 'terminée' : cls === 'current' ? 'en cours' : 'à venir'}</span></li>`;
+      }).join('')}
+    </ol>
+
+    <div class="grid-2" data-section="summary">
+      <section class="card accent" aria-labelledby="next-title">
+        <h2 id="next-title">Continuer avec Claude Code</h2>
+        <p class="small" style="color:var(--text-2)">Ouvrez Claude Code dans votre dossier Atelier et tapez :</p>
+        <div class="command"><code>/continuer ${esc(p.id)}</code><button class="btn" data-copy="/continuer ${esc(p.id)}">Copier</button></div>
+        <p class="small muted">${esc(continueHint(p, toValidate.length, openQuestions.length, phase))}</p>
+        ${nextAction ? `<p class="small"><strong>Prochaine action recommandée :</strong> ${esc(nextAction.text)}</p>` : ''}
+      </section>
+      <section class="stats" aria-label="Résumé">
+        <div class="stat${toValidate.length ? ' attention' : ''}"><b>${toValidate.length}</b><span>décision(s) à valider</span></div>
+        <div class="stat${openQuestions.length ? ' attention' : ''}"><b>${openQuestions.length}</b><span>question(s) ouverte(s)</span></div>
+        <div class="stat"><b>${essentials.length}</b><span>fonctionnalité(s) pour la 1re version</span></div>
+        ${tasks.length
+          ? `<div class="stat"><b>${tasks.filter((t) => t.status === 'done').length} / ${tasks.length}</b><span>tâche(s) réalisée(s)</span></div>`
+          : `<div class="stat"><b>${validatedDocs} / ${state.method.deliverables.length}</b><span>document(s) validé(s)</span></div>`}
+      </section>
+    </div>
+
+    ${toValidate.length ? `
+    <section class="card" data-section="summary" aria-labelledby="validate-title">
+      <div class="card-head"><h2 id="validate-title">À valider par vous</h2>
+        <span class="small muted">Claude Code en tiendra compte la prochaine fois.</span></div>
+      ${toValidate.map((d) => `
+        <div class="decision">
+          <div class="decision-text">
+            <span class="chip warn">${d.kind === 'recommendation' ? 'Recommandation de Claude' : 'Décision à confirmer'}</span>
+            <strong>${esc(d.text)}</strong>
+          </div>
+          <div class="actions">
+            <button class="btn primary" data-set="${d.id}" data-status="${d.kind === 'recommendation' ? 'accepted' : 'validated'}">Valider</button>
+            <button class="btn" data-set="${d.id}" data-status="rejected">Rejeter</button>
+            <button class="btn" data-edit="${d.id}">Modifier</button>
+          </div>
+        </div>`).join('')}
+    </section>` : ''}
+
+    ${openQuestions.length ? `
+    <section class="card" data-section="summary" aria-labelledby="questions-title">
+      <h2 id="questions-title">Questions ouvertes</h2>
+      ${openQuestions.map((q) => `
+        <form class="question" data-answer="${q.id}">
+          <label for="ans-${q.id}">${esc(q.text)}</label>
+          <div class="row">
+            <input type="text" id="ans-${q.id}" name="answer" maxlength="2000" autocomplete="off"
+              placeholder="Votre réponse (vous pouvez aussi répondre dans Claude Code)" value="${esc(q.answer || '')}">
+            <button class="btn" type="submit">Enregistrer</button>
+          </div>
+        </form>`).join('')}
+    </section>` : ''}
+
+    <div class="grid-2" data-section="memory">
+      <section class="card" aria-labelledby="features-title">
+        <h2 id="features-title">Fonctionnalités</h2>
+        ${essentials.length || later.length ? `
+          ${essentials.length ? `<div class="group-label accent">Première version</div>
+            <ul class="plain-list">${essentials.map((f) => `<li>${esc(f.text)}</li>`).join('')}</ul>` : ''}
+          ${later.length ? `<div class="group-label" style="margin-top:6px">Plus tard</div>
+            <ul class="plain-list" style="color:var(--text-2)">${later.map((f) => `<li>${esc(f.text)}</li>`).join('')}</ul>` : ''}`
+          : '<p class="empty">Elles seront listées à l’étape B. Fonctionnalités.</p>'}
+      </section>
+      <section class="card" aria-labelledby="memory-title">
+        <h2 id="memory-title">Ce que Claude a retenu</h2>
+        ${remembered.length
+          ? remembered.map((m) => `<div class="memory-row"><span class="chip ${m.kind === 'fact' ? 'ok' : m.kind === 'assumption' ? 'warn' : 'info'}">${MEMORY_SHORT[m.kind]}</span><span>${esc(m.text)}</span></div>`).join('')
+          : '<p class="empty">Rien pour l’instant : commencez la conversation dans Claude Code.</p>'}
+        ${p.items.length ? `<button class="btn sm" style="align-self:flex-start" data-memory>Voir toute la mémoire (${p.items.length} éléments)</button>` : ''}
+      </section>
+    </div>
+
+    <section class="card" data-section="docs" aria-labelledby="docs-title">
+      <h2 id="docs-title">Documents</h2>
+      ${state.method.deliverables.map((def) => {
+        const d = docs[def.type];
+        const ph = phaseOf(def.phase);
+        if (!d) {
+          return `<div class="doc-row"><span class="doc-title">${esc(def.title)}</span><span class="chip">pas encore rédigé</span>
+            <span class="doc-hint">${def.phase === p.phase ? `À demander dans Claude Code : <code>/livrable ${esc(p.id)} ${def.type}</code>` : `Prévu à l’étape ${ph.id}. ${esc(ph.name)}.`}</span></div>`;
+        }
+        const ok = d.status === 'validated';
+        return `<div class="doc-row"><span class="doc-title">${esc(def.title)}</span>
+          <span class="chip ${ok ? 'ok' : 'warn'}">${ok ? 'validé' : 'à relire'} · v${d.version}</span>
+          <span class="doc-hint">${ok ? 'Relu et validé.' : `Rédigé par Claude Code ${timeAgo(d.createdAt)} — à lire puis valider.`}</span>
+          <button class="btn sm" data-doc="${d.id}">Lire</button></div>`;
+      }).join('')}
+      <a class="small" href="/api/projects/${esc(p.id)}/export" download>Télécharger le dossier complet du projet (.md)</a>
+    </section>
+
+    <section data-section="journal" aria-labelledby="journal-title" style="display:flex;flex-direction:column;gap:8px">
+      <h2 id="journal-title" style="font-size:15px;color:var(--text-2)">Dernières actions réellement effectuées</h2>
+      <ul class="journal">${[...p.journal].reverse().slice(0, state.section === 'journal' ? 50 : 6)
+        .map((j) => `<li><time datetime="${j.at}">${formatDate(j.at)} —</time> ${esc(j.detail)}</li>`).join('')}</ul>
+    </section>
+  </div>`;
+  syncBottomNav();
 }
 
-function itemHtml(item, statuses, flash) {
-  return `<li class="item${flash ? ' flash' : ''}" data-item="${item.id}">
-    <div class="item-text">${escapeHtml(item.text)}</div>
-    <div class="item-actions">
-      <span class="chip ${STATUS_TONE[item.status] || ''}">${escapeHtml(STATUS_LABELS[item.status] || item.status)}</span>
-      ${statuses.length > 1 ? `<select data-status="${item.id}" aria-label="Changer le statut">
-        ${statuses.map((s) => `<option value="${s}"${s === item.status ? ' selected' : ''}>${escapeHtml(STATUS_LABELS[s] || s)}</option>`).join('')}
-      </select>` : ''}
-      <span class="small muted">${item.source === 'user' ? 'ajouté par vous' : ''}</span>
-      <span style="margin-left:auto"></span>
-      <button class="icon-btn" data-edit="${item.id}" title="Modifier le texte">✎</button>
-      <button class="icon-btn" data-delete="${item.id}" title="Supprimer">🗑</button>
-    </div>
-  </li>`;
+function continueHint(p, nValidate, nQuestions, phase) {
+  const parts = [];
+  if (p.inbox.length) parts.push(`${p.inbox.length} changement(s) fait(s) ici à transmettre`);
+  if (nValidate) parts.push(`${nValidate} décision(s) à confirmer`);
+  if (nQuestions) parts.push(`${nQuestions} question(s) ouverte(s)`);
+  return parts.length
+    ? `Claude reprendra là où vous vous êtes arrêté : ${parts.join(', ')}.`
+    : `Claude reprendra là où vous vous êtes arrêté, à l’étape ${phase.id}. ${phase.name}.`;
 }
 
 function latestDocs() {
@@ -321,129 +330,90 @@ function latestDocs() {
   return latest;
 }
 
-function renderDocs() {
+// ---------------------------------------------------------------------------
+// Fenêtres : document et mémoire complète
+// ---------------------------------------------------------------------------
+
+function openDialog() {
+  const dialog = $('#dialog');
+  if (!dialog.open) dialog.showModal();
+  $('#dialog-body').scrollTop = 0;
+}
+
+async function openDocument(docId) {
   const p = state.project;
-  const latest = latestDocs();
-  const rows = state.method.deliverables
-    .map((def) => {
-      const doc = latest[def.type];
-      const phase = phaseOf(def.phase);
-      const generating = state.busy === `doc:${def.type}`;
-      return `<div class="doc-row${def.phase === p.phase ? ' current-phase' : ''}">
-        <div class="doc-title"><span>${escapeHtml(def.title)}</span>
-          ${doc ? `<span class="chip ${doc.status === 'validated' ? 'ok' : 'warn'}">${doc.status === 'validated' ? 'validé' : 'brouillon'} · v${doc.version}</span>` : '<span class="chip">pas encore rédigé</span>'}
-        </div>
-        <span class="small muted">Étape ${phase.id}. ${escapeHtml(phase.name)}</span>
-        <div class="actions">
-          ${doc ? `<button class="btn small" data-view="${doc.id}">Lire</button>` : ''}
-          <button class="btn small" data-generate="${def.type}" ${state.busy ? 'disabled' : ''}>${generating ? 'Rédaction en cours…' : doc ? 'Réécrire' : 'Rédiger'}</button>
-        </div>
-      </div>`;
-    })
-    .join('');
-  $('#tab-docs').innerHTML = `
-    <p class="legend">Les livrables sont rédigés à partir de la mémoire du projet. Relisez-les puis validez-les ; chaque réécriture crée une nouvelle version.</p>
-    ${rows}
-    <div class="exports">
-      <p class="section-title">Exporter</p>
-      <a class="btn small" href="/api/projects/${p.id}/export?kind=dossier" download>Télécharger le dossier complet (.md)</a>
-      <a class="btn small" href="/api/projects/${p.id}/export?kind=pack" data-pack>Télécharger le pack pour Claude Code (CLAUDE.md)</a>
-    </div>`;
-}
-
-function renderJournal() {
-  const entries = [...state.project.journal].reverse();
-  $('#tab-journal').innerHTML = `
-    <p class="legend">Les actions réellement effectuées par l'application, dans l'ordre. Rien n'y figure qui n'ait pas eu lieu.</p>
-    <ul class="journal">${entries.map((j) => `<li><time>${formatDate(j.at, true)}</time>${escapeHtml(j.detail)}</li>`).join('')}</ul>`;
-}
-
-function openDocument(docId) {
-  const doc = state.project.documents.find((d) => d.id === docId);
+  const doc = await guard(() => api('GET', `/api/projects/${p.id}/documents/${docId}`));
   if (!doc) return;
-  const versions = state.project.documents.filter((d) => d.type === doc.type).sort((a, b) => b.version - a.version);
-  $('#doc-title').textContent = `${doc.title} — v${doc.version}`;
-  $('#doc-body').innerHTML = renderMarkdown(doc.content);
-  $('#doc-foot').innerHTML = `
-    <span class="chip ${doc.status === 'validated' ? 'ok' : 'warn'}">${doc.status === 'validated' ? 'Validé' : 'Brouillon'}</span>
-    <span class="small muted">Rédigé le ${formatDate(doc.createdAt, true)}</span>
-    ${versions.length > 1 ? `<select id="doc-version" style="width:auto">${versions.map((v) => `<option value="${v.id}"${v.id === doc.id ? ' selected' : ''}>Version ${v.version}</option>`).join('')}</select>` : ''}
-    <span style="margin-left:auto"></span>
-    <button class="btn small" id="doc-download">Télécharger (.md)</button>
-    ${doc.status === 'validated'
-      ? `<button class="btn small" data-doc-status="draft" data-doc="${doc.id}">Remettre en brouillon</button>`
-      : `<button class="btn small primary" data-doc-status="validated" data-doc="${doc.id}">Valider ce document</button>`}`;
-  $('#doc-download').onclick = () => download(`${slug(doc.title)}-v${doc.version}.md`, doc.content);
+  const versions = p.documents.filter((d) => d.type === doc.type).sort((a, b) => b.version - a.version);
+  const ok = doc.status === 'validated';
+  $('#dialog').dataset.kind = 'doc';
+  $('#dialog-title').textContent = doc.title;
+  $('#dialog-meta').textContent = `${p.name} · version ${doc.version} · rédigé par Claude Code le ${formatDate(doc.createdAt)}`;
+  $('#dialog-tools').innerHTML = versions.length > 1
+    ? `<label for="doc-version" class="small muted">Version</label>
+       <select id="doc-version">${versions.map((v) => `<option value="${v.id}"${v.id === doc.id ? ' selected' : ''}>v${v.version}${v.version === versions[0].version ? ' (actuelle)' : ''}</option>`).join('')}</select>`
+    : '';
+  $('#dialog-body').innerHTML = `<div class="markdown">${renderMarkdown(doc.content)}</div>`;
+  $('#dialog-foot').innerHTML = `
+    <span class="chip ${ok ? 'ok' : 'warn'}">${ok ? 'Validé' : 'Brouillon'}</span>
+    <span class="small muted">Une correction ? Demandez-la à Claude Code : <code>/modifier ${esc(p.id)} …</code></span>
+    <span class="spacer"></span>
+    <button class="btn" data-download="${doc.id}">Télécharger</button>
+    ${ok ? `<button class="btn" data-doc-status="draft" data-doc-id="${doc.id}">Remettre en brouillon</button>`
+         : `<button class="btn primary" data-doc-status="validated" data-doc-id="${doc.id}">Valider ce document</button>`}`;
+  $('#dialog').dataset.content = doc.content;
+  $('#dialog').dataset.filename = `${p.id}-${doc.type}-v${doc.version}.md`;
   const select = $('#doc-version');
   if (select) select.onchange = () => openDocument(select.value);
-  const dialog = $('#doc-dialog');
-  if (!dialog.open) dialog.showModal();
-  $('#doc-body').scrollTop = 0;
+  openDialog();
+}
+
+function openMemory() {
+  const p = state.project;
+  const kinds = state.method.kinds;
+  $('#dialog').dataset.kind = 'memory';
+  $('#dialog-title').textContent = 'Toute la mémoire du projet';
+  $('#dialog-meta').textContent = 'Ce que Claude Code a retenu. Vos corrections lui seront transmises à la prochaine séance.';
+  $('#dialog-tools').innerHTML = '';
+  $('#dialog-foot').innerHTML = '';
+  $('#dialog-body').innerHTML = KIND_ORDER.filter((k) => p.items.some((i) => i.kind === k)).map((kind) => {
+    const list = p.items.filter((i) => i.kind === kind);
+    return `<div class="mem-group"><h3>${esc(kinds[kind].label)} <span>(${list.length})</span></h3>
+      <ul class="mem-items">${list.map((i) => `<li class="mem-item">
+        <span class="t">${esc(i.text)}${i.answer ? `<small>Votre réponse : ${esc(i.answer)}</small>` : ''}</span>
+        <span class="chip ${TONE[i.status] || ''}">${esc(STATUS_LABELS[i.status] || i.status)}</span>
+        ${kinds[kind].statuses.length > 1 ? `<select data-status-select="${i.id}" aria-label="Changer le statut de « ${esc(i.text)} »">
+          ${kinds[kind].statuses.map((s) => `<option value="${s}"${s === i.status ? ' selected' : ''}>${esc(STATUS_LABELS[s] || s)}</option>`).join('')}
+        </select>` : ''}
+        <button class="icon-btn" data-edit="${i.id}" aria-label="Modifier « ${esc(i.text)} »" title="Modifier">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L13 5.5 10.5 3 3 10.5V13Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button>
+        <button class="icon-btn" data-delete="${i.id}" aria-label="Supprimer « ${esc(i.text)} »" title="Supprimer">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button>
+      </li>`).join('')}</ul></div>`;
+  }).join('') || '<p class="empty">La mémoire est vide.</p>';
+  openDialog();
 }
 
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
-async function sendMessage(text) {
-  text = text.trim();
-  if (!text || state.busy) return;
-  const p = state.project;
-  const pendingId = 'pending';
-  p.messages.push({ id: pendingId, role: 'user', content: text });
-  state.busy = 'chat';
-  $('#input').value = '';
-  renderMessages();
-  scrollMessages();
-  try {
-    const updated = await api('POST', `/api/projects/${p.id}/messages`, { text });
-    state.busy = false;
-    const last = updated.messages[updated.messages.length - 1];
-    setProject(updated, { flash: last?.changes?.added?.map((a) => a.id) || [] });
-  } catch (err) {
-    state.busy = false;
-    p.messages = p.messages.filter((m) => m.id !== pendingId);
-    $('#input').value = text;
-    renderMessages();
-    toast(err.message, true);
-  }
-  scrollMessages();
-  $('#input').focus();
-}
-
-async function generateDocument(type) {
-  if (state.busy) return;
-  const def = state.method.deliverables.find((d) => d.type === type);
-  state.busy = `doc:${type}`;
-  state.tab = 'docs';
-  renderProject();
-  toast(`Rédaction de « ${def.title} »… cela peut prendre une minute.`);
-  const updated = await guard(() => api('POST', `/api/projects/${state.project.id}/documents`, { type }));
-  state.busy = false;
-  if (updated) {
-    setProject(updated);
-    const doc = updated.documents.filter((d) => d.type === type).sort((a, b) => b.version - a.version)[0];
-    openDocument(doc.id);
-  } else renderProject();
-}
-
-async function changePhase(phaseId) {
-  const p = state.project;
-  if (phaseId === p.phase) return;
-  const target = phaseOf(phaseId);
-  const ids = state.method.phases.map((x) => x.id);
-  const back = ids.indexOf(phaseId) < ids.indexOf(p.phase);
-  if (back && !confirm(`Revenir à l'étape ${target.id}. ${target.title} ? Rien ne sera effacé.`)) return;
-  const updated = await guard(() => api('PATCH', `/api/projects/${p.id}`, { phase: phaseId }));
-  if (updated) {
-    setProject(updated);
-    toast(`Étape ${target.id}. ${target.title}`);
-  }
-}
-
-async function patchItem(itemId, changes) {
+async function patchItem(itemId, changes, message) {
   const updated = await guard(() => api('PATCH', `/api/projects/${state.project.id}/items/${itemId}`, changes));
-  if (updated) setProject(updated, { flash: [itemId] });
+  if (!updated) return;
+  state.project = updated;
+  render();
+  if ($('#dialog').open && $('#dialog').dataset.kind === 'memory') openMemory();
+  if (message) toast(message);
+}
+
+function closeNav() {
+  $('#sidebar').classList.remove('open');
+  $('#toggle-nav').setAttribute('aria-expanded', 'false');
+}
+
+function syncBottomNav() {
+  document.querySelectorAll('#bottom-nav button').forEach((b) => b.classList.toggle('active', b.dataset.section === state.section));
 }
 
 function download(filename, text) {
@@ -456,150 +426,118 @@ function download(filename, text) {
 }
 
 function bindEvents() {
-  $('#new-project-btn').onclick = showWelcome;
-  $('#toggle-sidebar').onclick = () => $('#sidebar').classList.toggle('open');
+  window.addEventListener('hashchange', route);
+  $('#refresh-btn').onclick = async () => {
+    await loadProjects();
+    if (state.project) await openProject(state.project.id);
+    toast('Actualisé.');
+  };
+  $('#toggle-nav').onclick = () => {
+    const open = $('#sidebar').classList.toggle('open');
+    $('#toggle-nav').setAttribute('aria-expanded', String(open));
+  };
   $('#show-archived').onchange = (e) => {
     state.showArchived = e.target.checked;
     renderProjectList();
   };
-
-  $('#new-project-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const name = $('#np-name').value.trim();
-    const idea = $('#np-idea').value.trim();
-    const project = await guard(() => api('POST', '/api/projects', { name, idea }));
-    if (!project) return;
-    $('#new-project-form').reset();
-    await loadProjects();
-    await openProject(project.id);
-    if (idea) await sendMessage(idea);
+  $('#dialog-close').onclick = () => $('#dialog').close();
+  $('#bottom-nav').onclick = (e) => {
+    const s = e.target.closest('[data-section]')?.dataset.section;
+    if (!s) return;
+    state.section = s;
+    render();
+    $('#main').scrollTop = 0;
   };
-
-  $('#composer').onsubmit = (e) => {
-    e.preventDefault();
-    sendMessage($('#input').value);
-  };
-  $('#input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      sendMessage($('#input').value);
-    }
+  document.addEventListener('focusout', () => {
+    setTimeout(() => state.pendingRender && safeRender(), 0);
   });
 
-  $('#project-name').onclick = async () => {
-    const name = prompt('Nouveau nom du projet :', state.project.name);
-    if (!name || name.trim() === state.project.name) return;
-    const updated = await guard(() => api('PATCH', `/api/projects/${state.project.id}`, { name }));
-    if (updated) setProject(updated);
-  };
-  $('#project-name').onkeydown = (e) => e.key === 'Enter' && $('#project-name').click();
-
-  $('#archive-btn').onclick = async () => {
-    const updated = await guard(() => api('PATCH', `/api/projects/${state.project.id}`, { archived: !state.project.archived }));
-    if (updated) setProject(updated);
-  };
-  $('#delete-btn').onclick = async () => {
-    const p = state.project;
-    if (!confirm(`Supprimer définitivement le projet « ${p.name} » ?\n\nToute sa mémoire et ses documents seront effacés. Cette action est irréversible.\n(Astuce : « Archiver » le masque sans rien effacer.)`)) return;
-    const ok = await guard(() => api('DELETE', `/api/projects/${p.id}`));
-    if (!ok) return;
-    await loadProjects();
-    showWelcome();
-    toast('Projet supprimé.');
-  };
-
-  document.querySelector('.tabs').onclick = (e) => {
-    const tab = e.target.closest('[data-tab]')?.dataset.tab;
-    if (!tab) return;
-    state.tab = tab;
-    renderTab();
-  };
-  document.querySelector('.mobile-tabs').onclick = (e) => {
-    const view = e.target.closest('[data-mobile]')?.dataset.mobile;
-    if (!view) return;
-    document.querySelector('.workspace').dataset.view = view;
-    document.querySelectorAll('.mobile-tabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.mobile === view));
-  };
-  document.querySelector('.workspace').dataset.view = 'chat';
-
-  $('#doc-close').onclick = () => $('#doc-dialog').close();
-
-  // Délégation : un seul gestionnaire pour tous les boutons générés dynamiquement.
   document.addEventListener('click', async (e) => {
-    const t = e.target.closest('button, a');
+    const t = e.target.closest('button');
     if (!t) return;
     const d = t.dataset;
-    if (d.open) return openProject(d.open);
-    if (d.option) return sendMessage(d.option);
-    if (d.phase) return changePhase(d.phase);
-    if (d.generate) return generateDocument(d.generate);
-    if (d.view) return openDocument(d.view);
-    if (d.goto) {
-      state.tab = d.goto;
-      document.querySelector('.workspace').dataset.view = 'panel';
-      document.querySelectorAll('.mobile-tabs .tab').forEach((x) => x.classList.toggle('active', x.dataset.mobile === 'panel'));
-      return renderTab();
-    }
-    if (d.edit) {
-      const item = state.project.items.find((i) => i.id === d.edit);
-      const text = prompt('Modifier le texte :', item.text);
-      if (text && text.trim() !== item.text) await patchItem(item.id, { text });
-      return;
-    }
-    if (d.delete) {
-      const item = state.project.items.find((i) => i.id === d.delete);
-      if (!confirm(`Supprimer « ${item.text} » de la mémoire du projet ?`)) return;
-      const updated = await guard(() => api('DELETE', `/api/projects/${state.project.id}/items/${item.id}`));
-      if (updated) setProject(updated);
-      return;
-    }
-    if (d.docStatus) {
-      const updated = await guard(() => api('PATCH', `/api/projects/${state.project.id}/documents/${d.doc}`, { status: d.docStatus }));
-      if (updated) {
-        setProject(updated);
-        openDocument(d.doc);
-        toast(d.docStatus === 'validated' ? 'Document validé.' : 'Document remis en brouillon.');
+    const p = state.project;
+    if (d.copy) {
+      try {
+        await navigator.clipboard.writeText(d.copy);
+        toast('Commande copiée : collez-la dans Claude Code.');
+      } catch {
+        toast(`Copiez cette commande : ${d.copy}`);
       }
       return;
     }
-    if (t.hasAttribute('data-pack')) {
-      // Vérifie qu'il y a quelque chose à exporter avant de lancer le téléchargement.
-      e.preventDefault();
-      const res = await fetch(t.href);
-      if (!res.ok) return toast((await res.json()).error, true);
-      download('CLAUDE.md', await res.text());
+    if (d.set) {
+      const item = p.items.find((i) => i.id === d.set);
+      return patchItem(d.set, { status: d.status }, `${d.status === 'rejected' ? 'Rejeté' : 'Validé'} : « ${item.text} »`);
+    }
+    if (d.edit) {
+      const item = p.items.find((i) => i.id === d.edit);
+      const text = prompt('Modifier le texte :', item.text);
+      if (text && text.trim() && text.trim() !== item.text) await patchItem(item.id, { text }, 'Modification enregistrée.');
+      return;
+    }
+    if (d.delete) {
+      const item = p.items.find((i) => i.id === d.delete);
+      if (!confirm(`Supprimer « ${item.text} » de la mémoire du projet ?`)) return;
+      const updated = await guard(() => api('DELETE', `/api/projects/${p.id}/items/${item.id}`));
+      if (updated) {
+        state.project = updated;
+        render();
+        openMemory();
+      }
+      return;
+    }
+    if (t.hasAttribute('data-memory')) return openMemory();
+    if (d.doc) return openDocument(d.doc);
+    if (d.docStatus) {
+      const updated = await guard(() => api('PATCH', `/api/projects/${p.id}/documents/${d.docId}`, { status: d.docStatus }));
+      if (!updated) return;
+      state.project = updated;
+      render();
+      await openDocument(d.docId);
+      return toast(d.docStatus === 'validated' ? 'Document validé.' : 'Document remis en brouillon.');
+    }
+    if (d.download) return download($('#dialog').dataset.filename, $('#dialog').dataset.content);
+    if (t.hasAttribute('data-archive')) {
+      const updated = await guard(() => api('PATCH', `/api/projects/${p.id}`, { archived: !p.archived }));
+      if (updated) {
+        state.project = updated;
+        await loadProjects();
+        render();
+      }
     }
   });
 
-  document.addEventListener('change', async (e) => {
-    const id = e.target.dataset?.status;
-    if (id) await patchItem(id, { status: e.target.value });
+  document.addEventListener('change', (e) => {
+    const id = e.target.dataset?.statusSelect;
+    if (id) patchItem(id, { status: e.target.value }, 'Statut modifié.');
   });
 
-  document.addEventListener('submit', async (e) => {
-    if (e.target.id !== 'add-item-form') return;
+  document.addEventListener('submit', (e) => {
+    const id = e.target.dataset?.answer;
+    if (!id) return;
     e.preventDefault();
-    const kind = $('#add-kind').value;
-    const text = $('#add-text').value;
-    const updated = await guard(() => api('POST', `/api/projects/${state.project.id}/items`, { kind, text }));
-    if (updated) setProject(updated, { flash: [updated.items[updated.items.length - 1].id] });
-  });
-
-  window.addEventListener('hashchange', () => {
-    const id = decodeURIComponent(location.hash.slice(1));
-    if (id && id !== state.project?.id) openProject(id);
+    const answer = e.target.elements.answer.value.trim();
+    if (!answer) return toast('Écrivez d’abord votre réponse.', true);
+    e.target.elements.answer.blur();
+    patchItem(id, { answer, status: 'answered' }, 'Réponse enregistrée : Claude Code la lira à la prochaine séance.');
   });
 }
 
-function formatDate(iso, withTime = false) {
-  const d = new Date(iso);
-  return withTime
-    ? d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
-    : d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+// ---------------------------------------------------------------------------
+// Dates
+// ---------------------------------------------------------------------------
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-function slug(text) {
-  return text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+function timeAgo(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'à l’instant';
+  if (s < 3600) return `il y a ${Math.round(s / 60)} min`;
+  if (s < 86400) return `il y a ${Math.round(s / 3600)} h`;
+  return `le ${new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`;
 }
 
 init().catch((err) => toast(`Impossible de démarrer : ${err.message}`, true));

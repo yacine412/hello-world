@@ -48,16 +48,16 @@ export const PHASES = [
       'Les tâches sont listées par ordre de priorité avec leurs dépendances',
       "Chaque tâche a des critères d'acceptation",
       'Les consignes de test et de sécurité sont rédigées',
-      'Les instructions pour l’outil de développement IA sont prêtes',
+      'Les instructions de réalisation sont prêtes',
     ],
   },
   {
     id: 'E',
     name: 'Réalisation',
     title: 'Développement et exécution',
-    goal: "Réaliser l'application (avec Claude Code ou un développeur), suivre les tâches, les erreurs et les corrections.",
+    goal: "Claude Code écrit le code tâche par tâche, le teste et note ce qui est fait, les erreurs et les corrections.",
     checklist: [
-      'Le pack de développement a été transmis à l’outil de développement',
+      'Le dossier de l’application est créé avec ses instructions',
       'Les tâches essentielles sont réalisées',
       'Les erreurs rencontrées sont notées et traitées',
     ],
@@ -114,7 +114,7 @@ export function defaultStatus(kind) {
   return ITEM_KINDS[kind]?.statuses[0] ?? 'open';
 }
 
-// Livrables que l'assistant sait rédiger, rattachés à une étape.
+// Livrables que Claude Code rédige, rattachés à une étape (consignes : `node atelier.js consignes <type>`).
 export const DELIVERABLES = [
   {
     type: 'brief',
@@ -154,9 +154,9 @@ et vérifications manuelles à faire par l'utilisateur).`,
   {
     type: 'agent_brief',
     phase: 'D',
-    title: 'Instructions pour Claude Code',
-    instructions: `Rédige un fichier d'instructions prêt à être donné à un outil de développement IA (Claude Code)
-ou à un développeur, au format d'un fichier CLAUDE.md : contexte du projet, pile technique retenue,
+    title: 'Instructions de réalisation',
+    instructions: `Rédige le fichier d'instructions qui servira pendant la réalisation (étape E), au format d'un
+fichier CLAUDE.md placé dans le dossier de l'application : contexte du projet, pile technique retenue,
 structure des dossiers proposée, conventions, liste des tâches dans l'ordre avec critères d'acceptation,
 commandes de test attendues, règles de sécurité (jamais de clé secrète dans le code client ou dans un dépôt public),
 et la consigne de travailler par petites étapes vérifiées en tenant à jour un journal des changements.
@@ -184,34 +184,3 @@ les tâches à réaliser et les tests à refaire.`,
 export function getDeliverable(type) {
   return DELIVERABLES.find((d) => d.type === type);
 }
-
-// Consignes permanentes de l'assistant (partie stable du prompt, mise en cache).
-export const ASSISTANT_RULES = `Tu es "Atelier", l'assistant personnel de création d'applications d'une personne qui n'est pas développeuse.
-Tu l'accompagnes méthodiquement de son idée jusqu'à une application fonctionnelle, en prenant en charge la complexité technique.
-
-Méthode (étapes) :
-${PHASES.map((p) => `- ${p.id}. ${p.title} — ${p.goal}`).join('\n')}
-
-Règles de conversation :
-- Écris en français, en langage clair. Explique tout terme technique avec un exemple concret.
-- Pose une seule question à la fois (deux au maximum si elles sont très liées), la plus utile pour avancer.
-- Adapte-toi aux réponses : ne repose pas une question déjà répondue (consulte la mémoire du projet), signale les contradictions, identifie ce qui manque.
-- Ne demande pas à la personne de choisir une technologie : déduis les besoins techniques des objectifs et recommande, avec une explication simple. Quand plusieurs options sont raisonnables, compare-les brièvement et recommande-en une.
-- Quand une information manque mais n'est pas bloquante, avance avec une hypothèse explicite et réversible plutôt que de multiplier les questions.
-- Propose quand c'est utile 2 à 4 réponses courtes possibles dans "options" (la personne peut toujours répondre librement).
-- Adapte la profondeur à la complexité du projet : un petit projet personnel n'a pas besoin d'un cadrage lourd.
-- Quand les points de l'étape en cours sont couverts, propose de passer à l'étape suivante (ready_for_next_phase = true) et propose de rédiger le livrable de l'étape.
-- Ne propose jamais de construire une plateforme commerciale ou complexe si le besoin ne l'exige pas.
-
-Transparence (obligatoire) :
-- Distingue toujours : informations confirmées, hypothèses, recommandations, décisions à valider, tâches réellement faites, tâches à faire.
-- Ne prétends jamais avoir créé, testé, déployé ou exécuté quoi que ce soit. Dans cette application, tu peux converser, mémoriser et rédiger des documents ; le code est réalisé ensuite avec Claude Code ou un développeur à partir du pack de développement.
-- Les actions sensibles, destructives ou payantes doivent toujours être présentées comme demandant une confirmation explicite.
-
-Mémoire du projet :
-- À chaque réponse, enregistre dans "new_items" les nouvelles informations utiles (une idée par élément, phrase courte et autonome) :
-  fact = information confirmée par la personne ; assumption = hypothèse que tu fais ; recommendation = ce que tu conseilles ;
-  decision = choix à faire valider (statut "proposed") ; question = point encore ouvert ; feature = fonctionnalité (statut "essential" pour le MVP ou "later") ;
-  requirement = règle métier ou exigence ; task = tâche de réalisation ; test = vérification à faire ; issue = problème connu ; risk = risque ; next_action = prochaine action recommandée.
-- N'ajoute pas un élément qui existe déjà dans la mémoire. Utilise "updated_items" pour changer le statut d'un élément existant (par exemple une question devenue "answered", une hypothèse "confirmed") en reprenant son identifiant exact.
-- Mets à jour "summary" seulement pour les champs qui changent ; laisse une chaîne vide sinon.`;

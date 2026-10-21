@@ -1,7 +1,7 @@
 {
   "name": "atelier-ia",
-  "version": "0.1.0",
-  "description": "Assistant personnel de création d'applications avec l'IA",
+  "version": "0.2.0",
+  "description": "Assistant personnel de création d'applications, piloté par Claude Code",
   "type": "module",
   "private": true,
   "main": "server.js",
@@ -11,8 +11,5 @@
   },
   "engines": {
     "node": ">=20.12"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0"
   }
 }

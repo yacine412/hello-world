@@ -1,103 +1,73 @@
-# Atelier IA — dossier de conception
+# Atelier — dossier de conception (v0.2)
 
-Ce document répond au cahier des charges initial : compréhension du besoin, fonctionnalités, parcours, choix techniques, risques, périmètre du MVP et étapes de réalisation.
+## 1. Le besoin
 
-## 1. Compréhension du besoin
+Une personne qui n'est pas développeuse veut transformer ses idées en applications qui fonctionnent. Elle a besoin d'un **accompagnement méthodique** qui :
 
-Une personne qui n'est pas développeuse veut transformer ses idées en applications qui fonctionnent. Il ne lui faut pas un chatbot de plus, mais un **accompagnement méthodique** qui :
+- pose les bonnes questions, une à la fois ;
+- **retient** ce qui est dit et décidé, projet par projet ;
+- distingue ce qui est confirmé, supposé, recommandé, à valider, fait et à faire ;
+- prend en charge les choix techniques ;
+- va jusqu'au code.
 
-- part d'une idée floue et pose les bonnes questions, une à la fois ;
-- **retient** ce qui a été dit et décidé, projet par projet, sans dépendre de l'historique d'une conversation ;
-- distingue clairement ce qui est confirmé, supposé, recommandé, à valider, fait ou à faire ;
-- prend les décisions techniques à sa place (en les expliquant) et ne lui laisse que les décisions importantes ;
-- produit des livrables directement exploitables par un outil de développement IA ;
-- reste simple, personnel, peu coûteux et facile à maintenir.
+**Contrainte ajoutée en v0.2 : pas de clé API.** Tout doit fonctionner avec l'abonnement Claude, au moyen de Claude Code et de Claude Design.
 
-## 2. Fonctionnalités
+## 2. L'architecture retenue
 
-| Fonctionnalité | Dans le MVP | Détail |
+```
+ Vous ──conversation──▶ Claude Code ──node atelier.js──▶ projets/<id>/ ◀──lecture / validations── Tableau de bord ◀── Vous
+                        (CLAUDE.md, /commandes)            projet.json                              (localhost:3000)
+                                                           documents/*.md
+                                                           application/  ◀── code écrit et testé par Claude Code
+```
+
+| Rôle | Outil | Pourquoi |
 |---|---|---|
-| Plusieurs projets : créer, reprendre, renommer, archiver, supprimer | ✅ | Liste à gauche ; suppression avec confirmation explicite |
-| Conversation guidée par étape | ✅ | Questions ciblées, réponses rapides proposées, détection des manques et contradictions |
-| Mémoire structurée du projet | ✅ | 12 types d'éléments avec statut ; modifiable à la main ; l'assistant est informé des modifications |
-| Parcours en 7 étapes (A → G) | ✅ | Avancement décidé par la personne ; retour en arrière possible |
-| Rédaction des livrables | ✅ | Fiche projet, cahier fonctionnel, conception, plan de développement, instructions Claude Code, fiche de validation, analyse d'impact ; versions + validation |
-| Export | ✅ | Dossier complet (.md) et pack `CLAUDE.md` pour Claude Code |
-| Journal des actions réelles | ✅ | Traçabilité : rien n'est affiché comme fait sans l'avoir été |
-| Mode démo sans clé | ✅ | Pour découvrir l'outil et pour les tests |
-| Génération et modification du code par l'application elle-même | ❌ V2 | Voir § 7 |
-| Exécution des tests et déploiement automatiques | ❌ V3 | Voir § 7 |
-| Import de fichiers (maquettes, PDF, exemples) | ❌ V2 | |
+| L'intelligence : questions, analyse, rédaction, code, tests | **Claude Code** | Inclus dans l'abonnement Claude ; sait lire et écrire des fichiers, lancer des commandes et des tests. Il réalise donc directement l'étape E. |
+| La méthode | `CLAUDE.md` + commandes `/nouveau-projet`, `/continuer`, `/livrable`, `/realiser`, `/modifier`, `/etat`, `/tableau` | Les consignes sont chargées automatiquement : même méthode à chaque séance, quel que soit l'historique de la conversation. |
+| La mémoire du projet | Fichiers dans `projets/<id>/`, modifiés uniquement via `node atelier.js` | L'outil vérifie chaque changement (types, statuts, étapes, chemins) : les fichiers restent valides même si Claude se trompe de commande. |
+| Le suivi et les validations | **Tableau de bord** local, sans IA | Une vue claire pour une personne non technique. Ses actions (valider, rejeter, répondre, corriger) sont transmises à Claude Code dans une « boîte de réception » qu'il lit au début de `/continuer`. |
+| L'interface | Maquette **Claude Design** (4 écrans : tableau de bord, document, accueil, téléphone), puis codée | La maquette sert de référence ; elle peut être retouchée dans Claude Design avant de demander à Claude Code de répercuter les changements. |
 
-## 3. Parcours utilisateur recommandé
+### Ce qui a changé par rapport à la v0.1
+- Il n'y a plus d'appel à l'API Anthropic, plus de clé, plus de dépendance npm, et plus de coût à l'usage en dehors de l'abonnement.
+- La conversation ne se fait plus dans la page web mais dans Claude Code, qui est bien plus capable : il lit les fichiers, écrit le code et lance les tests.
+- L'étape E (réalisation) n'est plus « à faire plus tard » : `/realiser` écrit le code dans `projets/<id>/application/`, tâche par tâche, avec les tests et le journal.
 
-1. **Nouveau projet** : un nom + l'idée en quelques phrases → la conversation démarre aussitôt.
-2. **Étape A – Idée** : 4 à 8 questions courtes (problème, utilisateurs, objectifs, contraintes, résultat attendu). L'assistant propose ensuite de rédiger la *Fiche projet* et de passer à l'étape suivante.
-3. **Étape B – Fonctionnalités** : tri « indispensable / plus tard », parcours, règles, données, critères de vérification → *Cahier fonctionnel*.
-4. **Étape C – Conception** : l'assistant recommande écrans, données et technologie (avec un tableau comparatif simple) ; la personne valide les décisions → *Conception de la solution*.
-5. **Étape D – Préparation** : *Plan de développement* + *Instructions pour Claude Code* → bouton **Télécharger le pack**.
-6. **Étape E – Réalisation** : la personne ouvre le pack avec Claude Code, qui réalise les tâches ; elle note dans la mémoire les tâches faites et les problèmes rencontrés (ou les colle dans la conversation pour avoir de l'aide).
-7. **Étape F – Validation** : *Fiche de validation* (vérifications pas à pas, choix d'hébergement, étapes manuelles).
-8. **Étape G – Évolution** : demande de modification en langage courant → *Analyse d'impact* → nouveau pack.
+## 3. Le parcours
 
-À tout moment : l'onglet **Où j'en suis** dit ce qui reste à faire ; l'onglet **Mémoire** permet de revenir sur une décision.
+1. Ouvrir Claude Code dans `atelier-ia`, taper `/nouveau-projet` et décrire son idée.
+2. Répondre aux questions. Claude enregistre au fil de l'eau les faits, hypothèses, fonctionnalités et décisions.
+3. Ouvrir le tableau de bord pour voir l'avancement, valider les décisions, répondre aux questions et lire les documents.
+4. Revenir dans Claude Code avec `/continuer <projet>` (le bouton **Copier** du tableau de bord donne la commande). Claude prend en compte les validations.
+5. À chaque étape : `/livrable`, relecture puis validation dans le tableau de bord, puis passage à l'étape suivante avec votre accord.
+6. Étape E : `/realiser`. Le code est écrit et testé, et le tableau de bord montre les tâches faites et les problèmes.
+7. Étape G : `/modifier <projet> <demande>`. Claude analyse l'impact avant de toucher au code.
 
-## 4. Choix techniques et justification
+## 4. Sécurité et confidentialité
+- Le tableau de bord n'écoute que sur `127.0.0.1` : il n'est pas visible depuis le réseau.
+- Les modifications envoyées par un autre site ouvert dans le navigateur sont refusées (vérification d'origine).
+- Tout texte affiché est échappé : un document ne peut pas exécuter de code dans la page.
+- Les identifiants de projet et les chemins de documents sont validés, ce qui empêche d'accéder à d'autres fichiers.
+- `projets/` est exclu de Git.
+- `CLAUDE.md` impose une confirmation avant toute installation, création de compte, service payant, suppression ou mise en ligne.
+- `.claude/settings.json` pré-autorise uniquement `node atelier.js` et l'écriture dans `projets/`. Toute autre commande reste soumise à votre accord dans Claude Code.
 
-### Options étudiées
-
-| Option | Simplicité pour vous | Coût | Maintenance | Mémoire par projet | Verdict |
-|---|---|---|---|---|---|
-| **A. Projet Claude (claude.ai) + instructions** | Très simple | Abonnement existant | Nulle | Partielle (documents du projet, pas d'état structuré ni de statuts) | Bon dépannage, mais pas de suivi structuré ni de validation |
-| **B. Plateforme no-code (Bubble, Glide…) + IA** | Moyenne | Abonnement mensuel + IA | Dépend du fournisseur | Oui | Coûteux, enfermement, logique IA difficile à régler |
-| **C. Petite application web locale + API Claude** | Simple une fois installée | Uniquement l'usage de l'IA | Faible (peu de code, 1 dépendance) | Oui, structurée | **Retenue** |
-| **D. Application hébergée (SaaS, base de données, comptes)** | Simple à l'usage | Hébergement + IA | Élevée (sécurité, mises à jour) | Oui | Surdimensionné pour un usage personnel |
-
-### Décisions
-
-- **Application web locale** (Node.js + page web) : fonctionne sur votre ordinateur, aucun hébergement ni compte à gérer, données chez vous. Peut être mise en ligne plus tard si besoin.
-- **Aucun framework ni étape de compilation** : HTML/CSS/JavaScript simples et une seule dépendance (le SDK officiel Anthropic). Moins de pièces = moins de pannes et de mises à jour.
-- **Stockage en fichiers JSON** (un par projet) plutôt qu'une base de données : lisible, sauvegardable par simple copie, suffisant pour un utilisateur. Écritures atomiques (pas de fichier à moitié écrit) et mises en file pour éviter les pertes.
-- **Un seul assistant, pas de multi-agents** : une conversation par étape avec une mémoire structurée suffit. Plusieurs agents ajouteraient du coût et de l'imprévisibilité sans bénéfice ici.
-- **Sorties structurées** : à chaque tour, l'IA renvoie un objet au format imposé (réponse, options, éléments à ajouter, statuts à changer, synthèse). L'application vérifie chaque élément avant de l'enregistrer : un type ou statut inconnu est ignoré.
-- **Continuité** : le contexte envoyé à l'IA est reconstruit à chaque tour depuis la mémoire structurée (synthèse + éléments avec identifiants + documents), complété par les 30 derniers messages. Les modifications faites à la main sont transmises à l'IA sous forme de notes.
-- **Modèle** : `claude-opus-5-5` par défaut (qualité de raisonnement pour le cadrage), modifiable dans `.env`. Les consignes stables sont mises en cache pour réduire le coût. En cas de refus par les filtres de sécurité, un repli automatique vers un autre modèle est activé (option `fallbacks` de l'API ; désactivée automatiquement si votre compte ne la prend pas en charge).
-- **Indépendance vis-à-vis du fournisseur** : tout l'accès à l'IA passe par `lib/ai.js`, derrière une interface de deux fonctions (`respond`, `writeDocument`). Ajouter un autre fournisseur revient à écrire un fichier, sans toucher au reste.
-
-### Sécurité et confidentialité
-- Le serveur n'écoute que sur `127.0.0.1` : il n'est pas accessible depuis le réseau.
-- La clé API est lue côté serveur depuis `.env`, jamais envoyée au navigateur ; `.env` et `data/` sont exclus de Git.
-- Les requêtes de modification venant d'un autre site ouvert dans le navigateur sont refusées (vérification d'origine).
-- Tout texte affiché (y compris celui produit par l'IA) est échappé : aucun code ne peut s'exécuter dans la page.
-- Identifiants de projet validés (pas d'accès à d'autres fichiers), taille des requêtes limitée.
-- Actions destructives (supprimer un projet ou un élément) : confirmation explicite. Les contenus de vos projets sont envoyés à Anthropic pour être traités par l'IA ; n'y mettez pas de données personnelles sensibles de tiers sans nécessité.
-
-## 5. Contraintes, dépendances et risques
-
-| Élément | Rôle | Action requise de votre part |
-|---|---|---|
-| Node.js | Fait tourner l'application | Installation une fois |
-| Compte + clé API Anthropic | Accès à l'IA | Création, crédit, limite de dépense recommandée |
-| Claude Code (facultatif, étape E) | Réalise le code à partir du pack | Installation séparée |
+## 5. Limites et risques connus
 
 | Risque | Mesure |
 |---|---|
-| L'IA invente ou oublie | Mémoire visible et modifiable ; distinction confirmé / hypothèse ; documents en brouillon tant que vous ne les validez pas |
-| Coûts d'IA | Paiement à l'usage, cache des consignes, modèle configurable, limite de dépense dans la console |
-| Perte de données | Fichiers locaux lisibles ; sauvegarde = copier `data/` ; export Markdown complet |
-| Fonctions de l'API non disponibles sur votre compte | Option de repli désactivée automatiquement ; messages d'erreur en français avec la marche à suivre |
-| Conversation très longue | Seuls les 30 derniers messages sont renvoyés ; la mémoire structurée porte le reste |
+| Claude oublie d'enregistrer une information | La mémoire est visible et modifiable dans le tableau de bord ; `CLAUDE.md` impose d'enregistrer au fil de l'eau et de relire l'état à chaque reprise. |
+| Écriture simultanée par Claude Code et par le tableau de bord, à la même seconde | Écritures atomiques (pas de fichier corrompu). Dans ce cas rare, la dernière écriture l'emporte. |
+| Limites d'usage de l'abonnement | Ce sont celles de Claude Code. Il n'y a pas de coût supplémentaire. |
+| Projets volumineux | Claude relit l'état résumé (`etat`), pas tout l'historique, et lit les documents à la demande. |
 
-## 6. Périmètre du MVP (livré)
-
-Le MVP couvre **les étapes A à D de bout en bout** (idée → pack de développement) et outille E, F, G par la mémoire (tâches, tests, problèmes), les livrables (fiche de validation, analyse d'impact) et le journal. Conformément à la recommandation du cahier des charges, il valide d'abord le cadrage et la préparation avant d'automatiser le code.
-
-**Ce qui a été vérifié automatiquement** (`npm test`, 10 tests) : rendu sécurisé, stockage et mises à jour simultanées, application des réponses de l'IA (y compris réponses invalides), construction du contexte, format exact des requêtes envoyées à Claude (avec un faux client), gestion des refus et erreurs, parcours complet via l'API en mode démo, absence de message orphelin si l'IA échoue. Le parcours a aussi été vérifié dans un navigateur (ordinateur et mobile).
-
-**Ce qui n'a pas pu être vérifié ici** : un échange réel avec Claude (aucune clé API dans l'environnement de développement). La première utilisation avec votre clé est donc le premier test réel ; tout problème s'affiche avec un message clair.
+## 6. Ce qui a été vérifié
+- **6 tests automatiques** (`npm test`) : rendu sécurisé, stockage et chemins, cycle complet de l'outil (création, mémoire, statuts invalides refusés, étapes, livrables versionnés), échanges entre le tableau de bord et Claude Code (validation, réponse, document validé, puis lus par `etat` et effacés par `lu`), export, sécurité, présence et forme des commandes.
+- **Vérification dans un navigateur** : ordinateur et téléphone, sans erreur. La page se met à jour automatiquement quand l'outil modifie un projet pendant qu'elle est ouverte.
+- **Pas encore vérifié** : une vraie séance dans Claude Code avec ces commandes. C'est le premier essai à faire de votre côté. `demarrer.bat` (Windows) n'a pas pu être exécuté ici.
 
 ## 7. Étapes suivantes proposées
-
-1. **Essai réel (vous)** : mettre la clé, mener un vrai petit projet de A à D, noter ce qui gêne. Ajuster les consignes (`lib/method.js`) en conséquence.
-2. **V2 – Réalisation intégrée** : relier l'application à Claude Code (Agent SDK) pour réaliser les tâches du plan dans un dossier de projet, avec confirmation avant chaque étape sensible, journal des fichiers modifiés et lancement des tests ; import de fichiers (maquettes, PDF).
-3. **V3 – Validation et déploiement assistés** : vérification des critères d'acceptation, aide pas à pas pour la mise en ligne, suivi des évolutions avec tests de non-régression.
+1. Mener un vrai petit projet de A à E, puis ajuster `CLAUDE.md` et les commandes selon ce qui gêne.
+2. Retoucher la maquette dans Claude Design si besoin, puis demander à Claude Code de mettre l'interface à jour.
+3. Étape F assistée : vérification des critères d'acceptation et aide pas à pas pour la mise en ligne de l'application réalisée.
